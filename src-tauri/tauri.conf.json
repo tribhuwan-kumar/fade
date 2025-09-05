@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "fade",
+  "version": "0.1.0",
+  "identifier": "tribhuwan.fade",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "fade",
+        "width": 600,
+        "height": 400,
+        "resizable": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "decorations": false,
+        "minimizable": false,
+        "maximizable": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "category": "Utility",
+    "copyright": "@tribhuwan-kumar",
+    "targets": ["nsis"],
+    "icon": [
+      "icons/StoreLogo.png",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  }
+}
