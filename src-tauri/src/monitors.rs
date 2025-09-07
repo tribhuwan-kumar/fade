@@ -1,10 +1,15 @@
+// Copyright 2025 @tribhuwan-kumar  within the commons conservancy
+// SPDX-License-Identifier: AGPL-3.0
+/*
+ * api for handling multiple monitors
+ */
 use anyhow::anyhow;
-use tracing::debug;
 use serde::{
     Serialize,
     Deserialize
 };
 use std::{
+    sync::Arc,
     fmt, ptr, iter,
     ffi::{OsString, OsStr},
     os::windows::ffi::{OsStringExt, OsStrExt},
@@ -45,10 +50,18 @@ fn flag_set<T: std::ops::BitAnd<Output = T> + std::cmp::PartialEq + Copy>(t: T, 
 }
 
 /// for dropping `CloseHandle`
-#[derive(Clone, PartialEq, Eq)]
-pub struct SafeHandle(pub HANDLE);
+#[derive(PartialEq, Eq)]
+pub struct SafeDisplayHandle(pub HANDLE);
 
-impl Drop for SafeHandle {
+// why does rust doesn't have implemention the
+// same trait on multiple struct, without using macro?
+impl fmt::Debug for SafeDisplayHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl Drop for SafeDisplayHandle {
     fn drop(&mut self) {
         unsafe {
             if !self.0.is_invalid() {
@@ -58,14 +71,8 @@ impl Drop for SafeHandle {
     }
 }
 
-impl fmt::Debug for SafeHandle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
-}
-
 /// for dropping `DestroyPhysicalMonitor`
-#[derive(Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct SafePhysicalMonitor(pub HANDLE);
 
 impl fmt::Debug for SafePhysicalMonitor {
@@ -84,12 +91,12 @@ impl Drop for SafePhysicalMonitor {
     }
 }
 
-// // send + sync
+/// send + sync
 unsafe impl Send for SafePhysicalMonitor {}
 unsafe impl Sync for SafePhysicalMonitor {}
 
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MonitorDeviceImpl {
     /// `monitorDevicePath` as unique identifier
     pub id: String,
@@ -97,24 +104,38 @@ pub struct MonitorDeviceImpl {
     pub device_name: String,
     /// actual monitors name (as shown in settings)
     pub friendly_name: String,
-    /// Handler
-    pub handle: SafeHandle,
+    /// Internal Display Handler
+    pub display_handle: Arc<SafeDisplayHandle>,
     /// Monitor handler
-    pub physical_monitor: SafePhysicalMonitor,
+    pub physical_monitor: Arc<SafePhysicalMonitor>,
     /// output display technology for determining internal display
     pub output_technology: DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY,
 }
 
-// send + sync
+/// send + sync
 unsafe impl Send for MonitorDeviceImpl {}
 unsafe impl Sync for MonitorDeviceImpl {}
 
 
+/// custom clone impl for `avoiding invalid handler error`
+impl Clone for MonitorDeviceImpl {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            device_name: self.device_name.clone(),
+            friendly_name: self.friendly_name.clone(),
+            display_handle: Arc::clone(&self.display_handle),
+            physical_monitor: Arc::clone(&self.physical_monitor),
+            output_technology: self.output_technology,
+        }
+    }
+}
+
 /// especially for passing to the frontend
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct MonitorInfo {
-    /// `monitorDevicePath` as unique identifier
-    pub id: String,           
+    /// win32 `DeviceName` for dc/gamma api
+    pub device_name: String,           
     /// actual monitors name (as shown in settings)
     pub name: String,         
     // current brightness percentage
@@ -136,7 +157,7 @@ fn wchar_to_string(s: &[u16]) -> String {
 /// passing the `monitorDevicePath` as string cause to relate with frontend in easier way
 fn get_file_handle_for_device_path(
     device_path: &str,
-) -> anyhow::Result<Option<SafeHandle>> {
+) -> anyhow::Result<Option<SafeDisplayHandle>> {
     unsafe {
         let wide: Vec<u16> = OsStr::new(device_path)
             .encode_wide()
@@ -154,7 +175,7 @@ fn get_file_handle_for_device_path(
         );
 
         match handle {
-            Ok(h) if !h.is_invalid() => Ok(Some(SafeHandle(h))),
+            Ok(h) if !h.is_invalid() => Ok(Some(SafeDisplayHandle(h))),
             Ok(_) => Ok(None), // invalid
             Err(e) => {
                 if e.code() == ERROR_ACCESS_DENIED.to_hresult() {
@@ -271,15 +292,15 @@ impl MonitorDeviceImpl {
         id: String,
         device_name: String,
         friendly_name: String,
-        handle: SafeHandle,
-        physical_monitor: SafePhysicalMonitor,
+        display_handle: Arc<SafeDisplayHandle>,
+        physical_monitor: Arc<SafePhysicalMonitor>,
         output_technology: DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY,
     ) -> Self {
         Self {
             id,
             device_name,
             friendly_name,
-            handle,
+            display_handle,
             physical_monitor,
             output_technology,
         }
@@ -288,7 +309,7 @@ impl MonitorDeviceImpl {
     pub fn info(&self) -> anyhow::Result<MonitorInfo> {
         Ok(
             MonitorInfo {
-                id: self.id.clone(),
+                device_name: self.device_name.clone(),
                 name: self.friendly_name.clone(),
                 brightness: self.get()?,
             }
@@ -307,7 +328,7 @@ impl MonitorDeviceImpl {
         }
     }
 
-    /// returns the corresponding brightness value
+    /// returns the corresponding monitor's brightness value
     pub fn get(&self) -> anyhow::Result<u32> {
         Ok(if self.is_internal() {
             brightness::ioctl_query_display_brightness(self)?
@@ -324,6 +345,7 @@ impl MonitorDeviceImpl {
             brightness::ioctl_set_display_brightness(self, new_value)?;
         } else {
             let current = brightness::ddcci_get_monitor_brightness(self)?;
+            tracing::debug!("current ddcci monitor brightness: {:?}", current);
             let new_value = current.percentage_to_current(percentage);
             brightness::ddcci_set_monitor_brightness(self, new_value)?;
         }
@@ -334,13 +356,12 @@ impl MonitorDeviceImpl {
     pub fn slider(&self, value: i32) -> anyhow::Result<()> { // handle to manage [-100..100]
         // negative, gamma dim only
         if value < 0 {
-            gamma::set_gamma(value, &self.device_name)?;
+            gamma::dim_brightness(value, &self.device_name)?;
             Ok(())
         } else {
             // reset gamma when >= 0
             gamma::reset_gamma(&self.device_name)?;
             if value == 0 {
-                // minimum brightness via native path
                 self.set(0)?;
             } else {
                 self.set(value as u32)?;
@@ -426,7 +447,7 @@ pub fn get_monitors() -> anyhow::Result<Vec<MonitorDeviceImpl>> {
                     );
 
                     // for internal ioctl displays
-                    let handle = if matches!(
+                    let internal_display = if matches!(
                         target.outputTechnology,
                         DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL
                         | DISPLAYCONFIG_OUTPUT_TECHNOLOGY_LVDS
@@ -439,15 +460,14 @@ pub fn get_monitors() -> anyhow::Result<Vec<MonitorDeviceImpl>> {
                         if EnumDisplayDevicesW(PCWSTR::null(), 0, &mut adapter, 0).as_bool() {
                             device_name = wchar_to_string(&adapter.DeviceName);
                         }
-                        debug!("device name, ioctl: {:?}", device_name);
                         get_file_handle_for_device_path(&device_path)?
-                            .unwrap_or(SafeHandle(HANDLE(ptr::null_mut())))
+                            .unwrap_or(SafeDisplayHandle(HANDLE(ptr::null_mut())))
                     } else {
-                        SafeHandle(HANDLE(ptr::null_mut()))
+                        SafeDisplayHandle(HANDLE(ptr::null_mut()))
                     };
 
                     // for external ddc/ci monitors
-                    let physical_monitor = if handle.0.is_invalid() {
+                    let physical_monitor = if internal_display.0.is_invalid() {
                         let mut found: Option<SafePhysicalMonitor> = None;
                         for hm in enum_display_monitors()? {
                             let devices = get_display_devices_from_hmonitor(hm)?;
@@ -483,12 +503,10 @@ pub fn get_monitors() -> anyhow::Result<Vec<MonitorDeviceImpl>> {
                         device_path.clone(),
                         device_name.clone(),
                         name.clone(),
-                        handle.clone(),
-                        physical_monitor,
+                        Arc::new(internal_display),
+                        Arc::new(physical_monitor),
                         target.outputTechnology,
                     ));
-
-                    debug!("monitors: {:?}", monitors);
                 }
             }
         }

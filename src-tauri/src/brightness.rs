@@ -15,9 +15,12 @@ use windows::{
     Win32::{
         System::IO::DeviceIoControl,
         Devices::Display::{
-            DISPLAY_BRIGHTNESS, DISPLAYPOLICY_AC, DISPLAYPOLICY_DC,
-            GetMonitorBrightness, SetMonitorBrightness, IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS,
-            IOCTL_VIDEO_QUERY_SUPPORTED_BRIGHTNESS, IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS,
+            DISPLAY_BRIGHTNESS, 
+            DISPLAYPOLICY_AC, DISPLAYPOLICY_DC,
+            GetMonitorBrightness, SetMonitorBrightness,
+            IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS,
+            IOCTL_VIDEO_QUERY_SUPPORTED_BRIGHTNESS,
+            IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS,
         },
     },
 };
@@ -66,6 +69,9 @@ pub fn ddcci_get_monitor_brightness(
 ) -> anyhow::Result<DdcciBrightnessValues> {
     unsafe {
         let mut v = DdcciBrightnessValues::default();
+        if device.physical_monitor.0.is_invalid() {
+            tracing::error!("failed to set monitor brightness, invalid handler");
+        }
         BOOL(GetMonitorBrightness(
             device.physical_monitor.0,
             &mut v.min,
@@ -88,6 +94,9 @@ pub fn ddcci_set_monitor_brightness(
     value: u32
 ) -> anyhow::Result<()> {
     unsafe {
+        if device.physical_monitor.0.is_invalid() {
+            tracing::error!("failed to set monitor brightness, invalid handler");
+        }
         BOOL(SetMonitorBrightness(device.physical_monitor.0, value))
             .ok()
             .map_err(|e| 
@@ -106,7 +115,7 @@ pub fn ioctl_query_supported_brightness(
         let mut bytes_returned = 0;
         let mut out_buffer = Vec::<u8>::with_capacity(256);
         DeviceIoControl(
-            device.handle.0,
+            device.display_handle.0,
             IOCTL_VIDEO_QUERY_SUPPORTED_BRIGHTNESS,
             None,
             0,
@@ -121,7 +130,7 @@ pub fn ioctl_query_supported_brightness(
         })
         .map_err(|e| 
             anyhow!(
-                "failed to set query supported monitor brightness (ioctl), device: {:#?}, err {:#?}", 
+                "failed to query supported monitor brightness (ioctl), device: {:#?}, err {:#?}", 
                 device.friendly_name.clone(), e
             ))
     }
@@ -135,7 +144,7 @@ pub fn ioctl_query_display_brightness(
         let mut bytes_returned = 0;
         let mut display_brightness = DISPLAY_BRIGHTNESS::default();
         DeviceIoControl(
-            device.handle.0,
+            device.display_handle.0,
             IOCTL_VIDEO_QUERY_DISPLAY_BRIGHTNESS,
             None,
             0,
@@ -183,7 +192,7 @@ pub fn ioctl_set_display_brightness(
         };
         let mut bytes_returned = 0;
         DeviceIoControl(
-            device.handle.0,
+            device.display_handle.0,
             IOCTL_VIDEO_SET_DISPLAY_BRIGHTNESS,
             Some(&mut display_brightness as *mut DISPLAY_BRIGHTNESS as *mut c_void),
             size_of::<DISPLAY_BRIGHTNESS>() as u32,

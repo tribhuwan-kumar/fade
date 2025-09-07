@@ -5,53 +5,53 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from '@tauri-apps/api/event'
 
 type MonitorInfo = {
-  id: string
   name: string
+  device_name: string
   brightness: number
 }
 
 function App() {
-  const [monitors, setMonitors] = useState<MonitorInfo[]>([])
-  const [name, setName] = useState<any>("")
+  const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
 
-  // useEffect(() => {
-  invoke("watch_monitors");
-  const unlisten = listen<MonitorInfo[]>("monitors-changed", (event) => {
-    const updated = event.payload; 
-    setMonitors(updated)
-    setName(updated.map(n => n.name).toString())
-  })
-    // return () => { unlisten.then(f => f()) }
-  // }, [])
+  useEffect(() => {
+    invoke("watch_monitors");
+    const unlisten = listen<MonitorInfo[]>("monitors-changed", (event) => {
+      const updated = event.payload; 
+      setMonitors(updated)
+    })
 
-  unlisten.then(f => f())
+    return () => { unlisten.then(f => f()) }
+  }, [])
 
-  const handleChange = async () => {
-    await invoke("set_brightness", { id: "\\\\.\\DISPLAY1",  level: 10 });
+  const handleSlider = async (deviceName: string, value: number) => {
+    try {
+      await invoke("set_brightness", { deviceName: deviceName, value: value });
+      setMonitors((prev) =>
+        prev.map((m) =>
+          m.device_name === deviceName ? { ...m, brightness: value } : m
+        )
+      );
+    } catch (e) {
+      console.error("failed to set brightness:", e);
+    }
   };
 
-  handleChange();
-
-  console.log("Event received!", monitors);
-  console.log("id", name)
+  const handleReset = async (deviceName: string, value: number) => {
+    await handleSlider(deviceName, value);
+  };
 
   return (
     <div className="container">
       {monitors.map(m => (
-        <div key={m.id}>
-          <h3>{m.name}</h3>
-          <Slider
-            minValue={-100}
-            maxValue={100}
-            centerValue={0}
-          />
-        </div>
-        // <Slider 
-        //   key={m.id} 
-        //   minValue={-80}
-        //   maxValue={100}
-        //   centerValue={0}
-        // />
+        <Slider
+          onChange={(val: number) => handleSlider(m.device_name, val)}
+          onDoubleClick={() => handleReset(m.device_name, 0)}
+          key={m.device_name}
+          minValue={-80}
+          maxValue={100}
+          centerValue={0}
+          brightnessValue={m.brightness}
+        />
       ))}
     </div>
   );

@@ -1,17 +1,27 @@
-import React, { useState, useMemo } from "react";
+import React, { 
+  useState,
+  useEffect,
+  useMemo
+} from "react";
 
 interface SliderProps {
   minValue: number;
   maxValue: number;
+  brightnessValue: number,
   centerValue?: number;
   className?: string;
+  onChange: (v: number) => Promise<void>;
+  onDoubleClick: () => Promise<void>;
 }
 
 const Slider: React.FC<SliderProps> = ({
   minValue,
   maxValue,
+  brightnessValue,
   centerValue,
   className,
+  onChange,
+  onDoubleClick,
 }) => {
   const center = useMemo(
     () =>
@@ -21,7 +31,7 @@ const Slider: React.FC<SliderProps> = ({
     [minValue, maxValue, centerValue]
   );
 
-  const [value, setValue] = useState(center);
+  const [value, setValue] = useState(brightnessValue);
 
   const valuePercent = useMemo(
     () => ((value - minValue) / (maxValue - minValue)) * 100,
@@ -63,16 +73,16 @@ const Slider: React.FC<SliderProps> = ({
     [valuePercent]
   );
 
-  const handleReset = () => {
-    setValue(center);
-  };
+  useEffect(() => {
+    setValue(brightnessValue)
+  }, [brightnessValue])
 
   return (
     <div
       className={`w-[90%] mt-[45px] mr-auto ml-auto my-auto flex items-center justify-center ${ className || ""}`}
     >
       <div className="relative w-full h-fit inline-block">
-        <div className="group w-full" onDoubleClick={handleReset}>
+        <div className="group w-full" onDoubleClick={onDoubleClick}>
           <div
             style={tooltipStyle}
             className="absolute bottom-full mb-4 px-1 py-0.5 bg-[#424242] text-slate-200/80 text-sm rounded-md opacity-0 group-hover:opacity-100
@@ -98,7 +108,7 @@ const Slider: React.FC<SliderProps> = ({
             min={minValue}
             max={maxValue}
             value={value}
-            onChange={(e) => setValue(parseInt(e.target.value, 10))}
+            onChange={(e) => onChange(Number(e.target.value))}
             className="absolute w-full h-[5px] top-0 left-0 opacity-0 cursor-pointer"
           />
         </div>

@@ -16,9 +16,15 @@ use tauri_plugin_opener::OpenerExt;
 use std::sync::{Arc,  OnceLock};
 use tokio::sync::Mutex;
 
-use crate::{log, utils, events, gamma};
+use crate::{log, utils, events, monitors::MonitorDeviceImpl};
 
-// global app handle
+/// for async!?
+#[derive(Clone)]
+pub struct AppState {
+    pub monitor_device: Arc<Mutex<Vec<MonitorDeviceImpl>>>,
+}
+
+/// global app handle
 pub static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn app_handle<'a>() -> &'a AppHandle {
@@ -31,8 +37,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             events::watch_monitors, events::set_brightness
         ])
-        .manage(events::AppState {
-            monitors: Arc::new(Mutex::new(Vec::new()))
+        .manage(AppState {
+            monitor_device: Arc::new(Mutex::new(Vec::new())),
         })
         .setup(|app| {
 
@@ -50,7 +56,7 @@ pub fn run() {
             let _ = TrayIconBuilder::new()
                 .menu(&menu)
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("fade Dimmer")
+                .tooltip("fade & brightness")
                 .on_tray_icon_event(|tray, event|  {
                     if let TrayIconEvent::Click {
                         position,
@@ -74,7 +80,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .build(app)?;
 
-            info!("initializing dim brightness fade level");
+            info!("initializing fade & brightness");
             Ok(())
         })
         .on_menu_event(|app, event| {

@@ -1,77 +1,29 @@
-/// later switch to wmi events
-/// currently the event handling is in polling, 
-use tauri::{Emitter, State};
-use tracing::{error, debug};
-use std::{sync::{Arc}};
-use tokio::sync::Mutex;
-use tokio::{time::{sleep, Duration}};
-use crate::{app, monitors,
-    monitors::{MonitorDeviceImpl, MonitorInfo}
+use tauri::{Emitter, AppHandle, State};
+use tracing::{error, debug, info};
+use tokio::{task, time::{sleep, Duration}};
+use crate::{app, monitors, app::AppState,
+    monitors::MonitorInfo,
 };
 
-/// pass the devices non-bloncking
-pub struct AppState {
-    pub monitors: Arc<Mutex<Vec<MonitorDeviceImpl>>>,
-}
+/// poll every 2 seconds for brightness changes
+async fn brightness_changes(app: AppHandle, state: AppState) {
+    let mut last_infos: Vec<MonitorInfo> = Vec::new();
 
-#[tauri::command]
-pub async fn watch_monitors(state: State<'_, AppState>) -> anyhow::Result<(), String> {
-    let app = app::app_handle();
     loop {
-        let new_devices = match monitors::get_monitors() {
-            Ok(list) => list,
-            Err(e) => {
-                error!("failed to query monitors: {:?}", e);
-                sleep(Duration::from_secs(2)).await;
-                continue;
-            }
-        };
+        let mut current_infos = Vec::new();
+        let monitors_lock = state.monitor_device.lock().await;
 
-        let mut changed = false;
-        let mut monitors = state.monitors.lock().await;
-
-        // update or add
-        for new_dev in &new_devices {
-            if let Some(existing) = monitors.iter_mut().find(|d| d.id == new_dev.id) {
-                // update metadata only (keep handle alive)
-                if existing.friendly_name != new_dev.friendly_name
-                    || existing.device_name != new_dev.device_name
-                    || existing.output_technology != new_dev.output_technology
-                {
-                    existing.friendly_name = new_dev.friendly_name.clone();
-                    existing.device_name = new_dev.device_name.clone();
-                    existing.output_technology = new_dev.output_technology;
-                    changed = true;
-                }
-                existing.handle = new_dev.handle.clone();
-                existing.physical_monitor = new_dev.physical_monitor.clone();
-            } else {
-                // new monitor, push it in
-                monitors.push(new_dev.clone());
-                changed = true;
+        for device in monitors_lock.iter() {
+            if let Ok(info) = device.info() {
+                current_infos.push(info);
             }
         }
+        drop(monitors_lock);
 
-        // emit change if needed
-        if changed {
-            debug!("monitor info changed: {:?}", *monitors);
-
-            let infos: Vec<MonitorInfo> = monitors
-                .iter()
-                .filter_map(|d| match d.info() {
-                    Ok(info) => Some(info),
-                    Err(e) => {
-                        error!(
-                            "failed to build `MonitorInfo` for device: {}, err: {:?}",
-                            d.friendly_name, e
-                        );
-                        None
-                    }
-                })
-                .collect();
-
-            if let Err(e) = app.emit("monitors-changed", &infos) {
-                error!("failed to emit monitors-changed: {:?}", e);
+        if last_infos != current_infos {
+            if !current_infos.is_empty() {
+                 app.emit("monitors-changed", &current_infos).ok();
+                 last_infos = current_infos;
             }
         }
 
@@ -79,27 +31,88 @@ pub async fn watch_monitors(state: State<'_, AppState>) -> anyhow::Result<(), St
     }
 }
 
+/// poll every 10 sec of new monitors device!
+async fn device_changes(state: AppState) {
+    loop {
+        sleep(Duration::from_secs(10)).await;
+
+        let new_devices = match monitors::get_monitors() {
+            Ok(list) => list,
+            Err(_) => continue,
+        };
+
+        let mut monitors = state.monitor_device.lock().await;
+
+        if monitors.len() != new_devices.len() 
+            || !monitors.iter().all(|d| new_devices.iter().any(|nd| nd.id == d.id)) {
+             *monitors = new_devices;
+        } else {
+            for existing in monitors.iter_mut() {
+                if let Some(new_dev) = new_devices.iter().find(|nd| nd.id == existing.id) {
+                    existing.display_handle = new_dev.display_handle.clone();
+                    existing.physical_monitor = new_dev.physical_monitor.clone();
+                }
+            }
+        }
+        drop(monitors)
+    }
+}
+
+#[tauri::command]
+pub async fn watch_monitors(
+    state: State<'_, AppState>,
+) -> Result<Vec<MonitorInfo>, String> {
+    let app = app::app_handle();
+
+    let mut initial_infos: Vec<MonitorInfo> = Vec::new();
+    let initial_devices = monitors::get_monitors()
+        .map_err(|e| e.to_string())?;
+
+    info!("initial devices, {:?}", initial_devices);
+
+    for device in &initial_devices {
+        if let Ok(info) = device.info() {
+            initial_infos.push(info);
+        }
+    }
+    {
+        let mut monitors_lock = state.monitor_device.lock().await;
+        *monitors_lock = initial_devices;
+    }
+
+    tokio::spawn(brightness_changes(app.clone(), state.inner().clone()));
+    tokio::spawn(device_changes(state.inner().clone()));
+
+    Ok(initial_infos)
+}
+
 #[tauri::command]
 pub async fn set_brightness(
-    id: String,
     value: i32,
+    device_name: String,
     state: State<'_, AppState>,
-) -> anyhow::Result<(), String> {
-    debug!("invoked `set_brightness`");
-    let devices = state.monitors.lock().await;
-    if let Some(device) = devices.iter().find(|d| d.id == id) {
-        let d = device.clone();
-        // run non-blocking
-        tokio::spawn(async move {
-            if let Err(e) = d.slider(value) {
-                error!(
-                    "failed to set brightness for device: {}, err: {:?}",
-                    d.friendly_name, e
-                );
-            }
-        });
-        Ok(())
-    } else {
-        Err(format!("monitor {} not found", id))
-    }
+) -> Result<(), String> {
+    debug!("invoked `set_brightness` for device id: {}", device_name);
+
+    let device_clone = {
+        let devices = state.monitor_device.lock().await;
+        if let Some(device) = devices.iter().find(|d| d.device_name == device_name) {
+            device.clone()
+        } else {
+            let err_msg = format!("failed to find device name: '{:?}'", device_name);
+            error!("{}", err_msg);
+            return Err(err_msg);
+        }
+    };
+
+    task::spawn_blocking(move || {
+        if let Err(e) = device_clone.slider(value) {
+            error!(
+                "failed to set brightness for device: {}, err: {:?}",
+                device_clone.friendly_name, e
+            );
+        }
+    });
+
+    Ok(())
 }
