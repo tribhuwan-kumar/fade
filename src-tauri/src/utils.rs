@@ -1,3 +1,17 @@
+use windows::{
+    core::PWSTR,
+    Win32::{
+        Foundation::{
+            WIN32_ERROR, GetLastError, LocalFree, HLOCAL
+        },
+        System::Diagnostics::Debug::{
+            FormatMessageW,
+            FORMAT_MESSAGE_FROM_SYSTEM,
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+            FORMAT_MESSAGE_ALLOCATE_BUFFER,
+        },
+    }
+};
 use tracing::error;
 use tauri::{
     PhysicalPosition,
@@ -39,3 +53,40 @@ pub fn show_tray_window(window: &WebviewWindow, position: &PhysicalPosition<f64>
     if let Err(e) = window.show() { error!("failed to show window: {}", e); }
     if let Err(e) = window.set_focus() { error!("failed to focus window: {}", e); }
 }
+
+
+/// returns string by formatting win32 error
+pub fn format_win_err(err: WIN32_ERROR) -> String {
+    let mut msg_buf = PWSTR::null();
+    let len = unsafe {
+        FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            None,
+            err.0,
+            0,                                              // dwlanguageid
+            PWSTR(&mut msg_buf.0 as *mut _ as *mut u16),    // lpbuffer
+            0,                                              // nsize
+            None,                                           // args
+        )
+    };
+
+    if len == 0 {
+        let last_error = unsafe { GetLastError() };
+        return format!(
+            "unknown error code {} (FormatMessageW failed with code {})",
+            err.0, last_error.0
+        );
+    }
+
+    let msg = unsafe {
+        let slice = std::slice::from_raw_parts(msg_buf.0, len as usize);
+        String::from_utf16_lossy(slice).trim().to_string()
+    };
+
+    unsafe {
+        LocalFree(Some(HLOCAL(msg_buf.0 as *mut _)));
+    }
+
+    msg
+}
+

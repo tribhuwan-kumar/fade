@@ -1,118 +1,184 @@
-use tauri::{Emitter, AppHandle, State};
+use anyhow::anyhow;
+use axum::extract::ws::Utf8Bytes;
 use tracing::{error, debug, info};
-use tokio::{task, time::{sleep, Duration}};
+use futures::{StreamExt, SinkExt};
+use tokio::{
+    sync::broadcast,
+    net::TcpListener,
+    task, time::{sleep, Duration}
+};
+use tauri::{Emitter, AppHandle, State};
 use crate::{app, monitors, app::AppState,
-    monitors::MonitorInfo,
+    monitors::MonitorInfo, /* overlay */
+};
+use std::{
+    thread,
+    sync::{
+        Mutex,
+        mpsc::{
+            self,
+        },
+    }
+};
+use axum::{
+    Router,
+    routing,
+    response::IntoResponse,
+    extract::{
+        ws::{Message, WebSocket},
+        WebSocketUpgrade,
+    },
 };
 
-/// poll every 2 seconds for brightness changes
-async fn brightness_changes(app: AppHandle, state: AppState) {
-    let mut last_infos: Vec<MonitorInfo> = Vec::new();
+#[derive(Clone)]
+pub struct MonitorBroadcaster {
+    pub sender: broadcast::Sender<Vec<MonitorInfo>>,
+
+}
+
+async fn ws_monitors_handler(
+    ws: WebSocketUpgrade,
+    broadcaster: axum::extract::State<MonitorBroadcaster>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| {
+        handle_monitor_socket(
+            socket,
+            broadcaster.0.clone(),
+        )
+    })
+}
+
+/// 2 sec sleep for brightness updates
+async fn brightness_changes(state: AppState, broadcaster: MonitorBroadcaster) {
+    let mut last_infos = Vec::new();
 
     loop {
         let mut current_infos = Vec::new();
-        let monitors_lock = state.monitor_device.lock().await;
+        let devices = state.monitor_device.lock().await;
 
-        for device in monitors_lock.iter() {
-            if let Ok(info) = device.info() {
+        for dev in devices.iter() {
+            if let Ok(info) = dev.info() {
                 current_infos.push(info);
             }
         }
-        drop(monitors_lock);
+        drop(devices);
 
-        if last_infos != current_infos {
-            if !current_infos.is_empty() {
-                 app.emit("monitors-changed", &current_infos).ok();
-                 last_infos = current_infos;
-            }
+        if current_infos != last_infos {
+            debug!("brightness changed detected, {:?}", current_infos);
+            let _ = broadcaster.sender.send(current_infos.clone());
+            last_infos = current_infos;
         }
 
         sleep(Duration::from_secs(2)).await;
     }
 }
 
-/// poll every 10 sec of new monitors device!
-async fn device_changes(state: AppState) {
+/// 10 sec sleep for brightness updates
+async fn device_changes(state: AppState, broadcaster: MonitorBroadcaster) {
     loop {
         sleep(Duration::from_secs(10)).await;
 
         let new_devices = match monitors::get_monitors() {
             Ok(list) => list,
-            Err(_) => continue,
+            Err(e) => {
+                error!("device scan failed: {e}");
+                continue;
+            }
         };
 
-        let mut monitors = state.monitor_device.lock().await;
+        let mut devices_lock = state.monitor_device.lock().await;
 
-        if monitors.len() != new_devices.len() 
-            || !monitors.iter().all(|d| new_devices.iter().any(|nd| nd.id == d.id)) {
-             *monitors = new_devices;
-        } else {
-            for existing in monitors.iter_mut() {
-                if let Some(new_dev) = new_devices.iter().find(|nd| nd.id == existing.id) {
-                    existing.display_handle = new_dev.display_handle.clone();
-                    existing.physical_monitor = new_dev.physical_monitor.clone();
-                }
-            }
+        // compare device lists by IDs
+        let changed = new_devices.len() != devices_lock.len()
+            || !devices_lock.iter().all(|d| 
+                new_devices.iter().any(|nd| nd.id == d.id)
+            );
+
+        if changed {
+            *devices_lock = new_devices.clone();
+            // map devices → MonitorInfo for frontend broadcast
+            let infos: Vec<_> = new_devices
+                .iter()
+                .filter_map(|d| d.info().ok())
+                .collect();
+
+            debug!("monitor device configuration changed: {:?}", infos);
+            let _ = broadcaster.sender.send(infos);
         }
-        drop(monitors)
+
+        drop(devices_lock);
     }
 }
 
-#[tauri::command]
-pub async fn watch_monitors(
-    state: State<'_, AppState>,
-) -> Result<Vec<MonitorInfo>, String> {
-    let app = app::app_handle();
 
-    let mut initial_infos: Vec<MonitorInfo> = Vec::new();
-    let initial_devices = monitors::get_monitors()
-        .map_err(|e| e.to_string())?;
+/// Handle each connected websocket client
+async fn handle_monitor_socket(
+    mut socket: WebSocket,
+    broadcaster: MonitorBroadcaster,
+) {
+    let mut rx = broadcaster.sender.subscribe();
 
-    info!("initial devices, {:?}", initial_devices);
+    // send initial monitor list
+    if let Ok(monitors) = monitors::get_monitors() {
+        let infos: Vec<MonitorInfo> = monitors.iter()
+            .filter_map(|d| d.info().ok())
+            .collect();
+        let _ = socket.send(Message::Text(Utf8Bytes::from(
+            serde_json::to_string(&infos).unwrap()))
+        ).await;
+    }
 
-    for device in &initial_devices {
-        if let Ok(info) = device.info() {
-            initial_infos.push(info);
+    // forward all broadcast updates to this websocket client
+    while let Ok(monitors) = rx.recv().await {
+        let json = serde_json::to_string(&monitors).unwrap();
+        let _ = socket.send(Message::Text(Utf8Bytes::from(json))).await;
+    }
+}
+
+
+/// A simple websocket for monitors based updates
+pub async fn start_ws_server(state: AppState) -> anyhow::Result<()> {
+    let (tx, _rx) = broadcast::channel(16);
+    let broadcaster = MonitorBroadcaster { sender: tx.clone() };
+
+    // start both watchers
+    tokio::spawn(device_changes(state.clone(), broadcaster.clone()));
+    tokio::spawn(brightness_changes(state.clone(), broadcaster.clone()));
+
+    let app = Router::new()
+        .route("/ws/monitors", routing::get(ws_monitors_handler))
+        .with_state(broadcaster.clone());
+
+    // keep it hardcoded :p
+    let listener = TcpListener::bind("127.0.0.1:8956").await?;
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            error!("WebSocket server failed: {}", e);
         }
-    }
-    {
-        let mut monitors_lock = state.monitor_device.lock().await;
-        *monitors_lock = initial_devices;
-    }
+    });
 
-    tokio::spawn(brightness_changes(app.clone(), state.inner().clone()));
-    tokio::spawn(device_changes(state.inner().clone()));
-
-    Ok(initial_infos)
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn set_brightness(
     value: i32,
     device_name: String,
-    state: State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    debug!("invoked `set_brightness` for device id: {}", device_name);
+    let devices = state.monitor_device.lock().await;
+    let overlay_tx = state.overlay_tx.lock().await;
 
-    let device_clone = {
-        let devices = state.monitor_device.lock().await;
-        if let Some(device) = devices.iter().find(|d| d.device_name == device_name) {
-            device.clone()
-        } else {
-            let err_msg = format!("failed to find device name: '{:?}'", device_name);
-            error!("{}", err_msg);
-            return Err(err_msg);
-        }
+    let tx = match overlay_tx.as_ref() {
+        Some(tx) => tx,
+        None => return Err("overlay channel not initialized".to_string()),
     };
 
-    task::spawn_blocking(move || {
-        if let Err(e) = device_clone.slider(value) {
-            error!(
-                "failed to set brightness for device: {}, err: {:?}",
-                device_clone.friendly_name, e
-            );
-        }
-    });
+    if let Some(dev) = devices.iter().find(|d| d.device_name == device_name) {
+        let _ = dev.slider(value, tx).await.map_err(|e| error!("slider crashed: {:?}", e.to_string()));
+    } else {
+        return Err(format!("device not found: {}", device_name));
+    }
 
     Ok(())
 }

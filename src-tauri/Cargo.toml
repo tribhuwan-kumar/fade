@@ -16,6 +16,7 @@ tracing = "0.1.41"
 futures = "0.3.31"
 tracing-appender = "0.2.3"
 tauri-plugin-opener = "2.5.0"
+axum = { version = "0.8.6", features = ["ws"] }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2.8.4 ", features = ["tray-icon"] }
 tokio = { version = "1.47.1", features = ["time"] }

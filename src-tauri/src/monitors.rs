@@ -1,13 +1,14 @@
-// Copyright 2025 @tribhuwan-kumar  within the commons conservancy
-// SPDX-License-Identifier: AGPL-3.0
 /*
+ * Copyright 2025 @tribhuwan-kumar within the commons conservancy
+ * SPDX-License-Identifier: AGPL-3.0
  * api for handling multiple monitors
- */
+*/
 use anyhow::anyhow;
 use serde::{
     Serialize,
     Deserialize
 };
+use tokio::sync::mpsc::Sender;
 use std::{
     sync::Arc,
     fmt, ptr, iter,
@@ -42,7 +43,7 @@ use windows::{
         },
     }
 };
-use crate::{gamma, brightness};
+use crate::{brightness, overlay::Overlay};
 
 #[inline]
 fn flag_set<T: std::ops::BitAnd<Output = T> + std::cmp::PartialEq + Copy>(t: T, flag: T) -> bool {
@@ -100,7 +101,7 @@ unsafe impl Sync for SafePhysicalMonitor {}
 pub struct MonitorDeviceImpl {
     /// `monitorDevicePath` as unique identifier
     pub id: String,
-    /// win32 `DeviceName` for dc/gamma api
+    /// win32 `DeviceName`
     pub device_name: String,
     /// actual monitors name (as shown in settings)
     pub friendly_name: String,
@@ -134,7 +135,7 @@ impl Clone for MonitorDeviceImpl {
 /// especially for passing to the frontend
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct MonitorInfo {
-    /// win32 `DeviceName` for dc/gamma api
+    /// win32 `DeviceName`
     pub device_name: String,           
     /// actual monitors name (as shown in settings)
     pub name: String,         
@@ -155,7 +156,7 @@ fn wchar_to_string(s: &[u16]) -> String {
 
 /// gets the handler by consuming the `monitorDevicePath` from `DISPLAYCONFIG_TARGET_DEVICE_NAME`
 /// passing the `monitorDevicePath` as string cause to relate with frontend in easier way
-fn get_file_handle_for_device_path(
+fn get_handler_from_device_path(
     device_path: &str,
 ) -> anyhow::Result<Option<SafeDisplayHandle>> {
     unsafe {
@@ -259,7 +260,7 @@ fn get_display_devices_from_hmonitor(
 /// returns a list of `HMONITOR` handles,
 /// it's a logical construct that might correspond to multiple physical monitors
 /// e.g. when in "Duplicate" mode two physical monitors will belong to the same `HMONITOR`
-fn enum_display_monitors() -> anyhow::Result<Vec<HMONITOR>> {
+pub fn enum_display_monitors() -> anyhow::Result<Vec<HMONITOR>> {
     unsafe{
         extern "system" fn enum_monitors(
             handle: HMONITOR,
@@ -353,26 +354,24 @@ impl MonitorDeviceImpl {
     }
 
     /// especially for the frontend
-    pub fn slider(&self, value: i32) -> anyhow::Result<()> { // handle to manage [-100..100]
-        // negative, gamma dim only
-        if value < 0 {
-            gamma::dim_brightness(value, &self.device_name)?;
-            Ok(())
+    pub async fn slider(
+        &self, value: i32,
+        overlay_tx: &Sender<Overlay>
+    ) -> anyhow::Result<()> { // handle to manage [-100..100]
+        if value >= 0 {
+            self.set(value as u32)?
         } else {
-            // reset gamma when >= 0
-            gamma::reset_gamma(&self.device_name)?;
-            if value == 0 {
-                self.set(0)?;
-            } else {
-                self.set(value as u32)?;
-            }
-            Ok(())
+            let alpha = ((-value) as f32 * 2.55) as u8;
+            overlay_tx.send(Overlay {
+                level: alpha,
+                device_name: self.device_name.clone(),
+            }).await?;
         }
+        Ok(())
     }
 }
 
 
-/// returns the `MonitorDeviceImpl` for the frontend
 /// it consumes `monitorDevicePath` for both ddc/ci and ioctl devices
 pub fn get_monitors() -> anyhow::Result<Vec<MonitorDeviceImpl>> {
     unsafe {
@@ -460,7 +459,7 @@ pub fn get_monitors() -> anyhow::Result<Vec<MonitorDeviceImpl>> {
                         if EnumDisplayDevicesW(PCWSTR::null(), 0, &mut adapter, 0).as_bool() {
                             device_name = wchar_to_string(&adapter.DeviceName);
                         }
-                        get_file_handle_for_device_path(&device_path)?
+                        get_handler_from_device_path(&device_path)?
                             .unwrap_or(SafeDisplayHandle(HANDLE(ptr::null_mut())))
                     } else {
                         SafeDisplayHandle(HANDLE(ptr::null_mut()))

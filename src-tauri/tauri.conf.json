@@ -5,7 +5,7 @@
   "identifier": "tribhuwan.fade",
   "build": {
     "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:8732",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
@@ -13,9 +13,7 @@
     "windows": [
       {
         "title": "fade",
-        "width": 600,
-        "height": 400,
-        "resizable": false,
+        "resizable": true,
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,

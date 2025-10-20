@@ -7,8 +7,9 @@ import React, {
 interface SliderProps {
   minValue: number;
   maxValue: number;
+  centerValue: number;
   brightnessValue: number,
-  centerValue?: number;
+  displayName: string;
   className?: string;
   onChange: (v: number) => Promise<void>;
   onDoubleClick: () => Promise<void>;
@@ -18,6 +19,7 @@ const Slider: React.FC<SliderProps> = ({
   minValue,
   maxValue,
   brightnessValue,
+  displayName,
   centerValue,
   className,
   onChange,
@@ -91,6 +93,9 @@ const Slider: React.FC<SliderProps> = ({
             <span className="font-medium text-center">{value}</span>
             <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-[#424242]"></div>
           </div>
+          <span className="absolute right-0 bottom-10 ml-auto mr-2 text-xs text-shadow-lg text-center items-center content-center text-slate-200/60 mt-3">
+            {displayName}
+          </span>
           <div className="relative flex h-[5px] items-center">
             <div className="absolute w-full h-full rounded-full bg-gray-300"></div>
             <div
@@ -112,10 +117,9 @@ const Slider: React.FC<SliderProps> = ({
             className="absolute w-full h-[5px] top-0 left-0 opacity-0 cursor-pointer"
           />
         </div>
-        <div className="flex justify-between text-xs text-slate-200/60 mt-3">
+        <div className="flex justify-between items-center content-center text-xs text-center text-shadow-lg text-slate-200/60 mt-3">
           <span>{minValue}</span>
-          <span
-            className="absolute"
+          <span className="absolute"
             style={{
               left: `${centerPercent}%`,
               transform: 'translateX(-50%)'

@@ -16,6 +16,10 @@ pub fn init_logging(app: &App) -> Result<WorkerGuard> {
     }
 
     let log_path = app_data_local.join("fade.log");
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
     let file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -27,20 +31,19 @@ pub fn init_logging(app: &App) -> Result<WorkerGuard> {
     let file_layer = fmt::layer()
         .with_writer(file_writer)
         .with_ansi(false)
-        .with_filter(EnvFilter::new("info"));
+        .with_filter(env_filter.clone());
 
     let registry = tracing_subscriber::registry().with(file_layer);
 
-    #[cfg(debug_assertions)]
-    let registry = {
+    let con_registry = {
         let console_layer = fmt::layer()
             .with_writer(std::io::stdout)
             .with_ansi(true)
-            .with_filter(EnvFilter::new("debug"));
+            .with_filter(env_filter.clone());
         registry.with(console_layer)
     };
 
-    registry.init();
+    con_registry.init();
 
     std::panic::set_hook(Box::new(|panic_info| {
         error!("panic occurred: {:?}", panic_info);
