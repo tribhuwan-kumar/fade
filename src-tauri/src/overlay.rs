@@ -1,5 +1,5 @@
-use std::{collections::HashMap};
 use anyhow::{anyhow, bail};
+use std::collections::HashMap;
 use tracing::{warn, debug, info, error};
 use tokio::{
     sync::mpsc::Receiver,
@@ -154,6 +154,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 let _end_paint = EndPaint(hwnd, &ps);
                 LRESULT(0)
             }
+            // fuck it, just drop the thread
             // WM_DESTROY => {
             //     PostQuitMessage(0);
             //     LRESULT(0)
@@ -163,6 +164,3 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
     }
 }
 
-
-
-// fuck it, just drop the thread

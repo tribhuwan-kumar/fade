@@ -30,17 +30,8 @@ function App() {
     socket.onmessage = (event) => {
       try {
         const monitors = JSON.parse(event.data);
-        let mon = [{
-          "device_name": "\\\\.\\DISPLAY2",
-          "name": "Internal Display",
-          "brightness": 0
-        }, {
-          "device_name": "\\\\.\\DISPLAY1",
-          "name": " Display",
-          "brightness": 20
-        } ]
-        setMonitors(mon);
-        console.log(mon);
+        setMonitors(monitors);
+        console.log(monitors);
       } catch (err) {
         setErrors(prev => [...prev, (err as Error)?.message || String(err)]);
         console.error("failed to parse monitor data", err);

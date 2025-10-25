@@ -8,7 +8,6 @@ mod events;
 mod overlay;
 mod monitors;
 mod brightness;
-// mod c;
 
 fn main() {
     crate::app::run();
