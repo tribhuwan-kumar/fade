@@ -59,11 +59,17 @@ jobs:
       - name: Build tauri
         run: bun tauri build
 
+      - name: Collect installer
+        shell: bash
+        run: |
+          mkdir dist
+          cp src-tauri/target/release/bundle/nsis/*.exe dist/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: target
-          path: target
+          name: windows-installer
+          path: dist/
 
   release:
     needs: build
@@ -86,18 +92,6 @@ jobs:
           fi
           echo "tag_name=$TAG_NAME" >> $GITHUB_ENV
           echo "release_name=$RELEASE_NAME" >> $GITHUB_ENV
-
-      - name: Collect installer
-        shell: bash
-        run: |
-          mkdir dist
-          cp src-tauri/target/release/bundle/nsis/*.exe dist/
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-installer
-          path: dist/
 
       - name: Create GitHub Release
         id: create_release
