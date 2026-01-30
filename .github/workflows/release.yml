@@ -62,7 +62,6 @@ jobs:
       - name: Collect installer
         shell: bash
         run: |
-          mkdir dist
           cp src-tauri/target/release/bundle/nsis/*.exe dist/
 
       - name: Upload artifact
