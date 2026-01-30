@@ -46,10 +46,6 @@ jobs:
         run: |
           choco install llvm nsis zip -y
 
-      # ---------- Build ----------
-      - name: Build tauri
-        run: bun tauri build
-
       - name: Set up MinGW (Windows)
         if: matrix.platform == 'windows'
         run: |
@@ -60,16 +56,9 @@ jobs:
           choco install mingw zip --yes --force
           Import-Module $env:ChocolateyInstall\helpers\chocolateyProfile.psm1
 
-      - name: Build with Cargo
-        run: |
-          make clean
-          make all
-
-      - name: Archive binary
-        shell: bash
-        run: |
-          mkdir -p dist
-          zip -r dist/fade-windows_x8664.zip fade.exe
+      # ---------- Build ----------
+      - name: Build tauri
+        run: bun tauri build
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
