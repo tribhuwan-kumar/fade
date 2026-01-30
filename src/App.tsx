@@ -1,5 +1,5 @@
 import "./App.css";
-import fubuki from "./assets/fubuki.jpg";
+import fubuki from "@/assets/fubuki.jpg";
 import Slider from "@/components/Slider";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useEffect, useRef } from "react";
