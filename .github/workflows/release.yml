@@ -31,9 +31,6 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install dependencies
-        run: bun install
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -56,7 +53,9 @@ jobs:
           choco install mingw zip --yes --force
           Import-Module $env:ChocolateyInstall\helpers\chocolateyProfile.psm1
 
-      # ---------- Build ----------
+      - name: Install dependencies
+        run: bun install
+
       - name: Build tauri
         run: bun tauri build
 
