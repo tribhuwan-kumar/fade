@@ -3,6 +3,7 @@ import Slider from "@/components/Slider";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useEffect, useRef } from "react";
 import { LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
+import fubuki from "@/assets/fubuki.jpg";
 
 const WINDOW_WIDTH = 380;
 
@@ -49,7 +50,7 @@ function App() {
   useEffect(() => {
     if (containerRef.current) {
       const contentHeight = containerRef.current.scrollHeight;
-      const newHeight = contentHeight + 150;
+      const newHeight = contentHeight + 70;
       const win = getCurrentWindow();
       win.setSize(new LogicalSize(WINDOW_WIDTH, newHeight));
     }
@@ -70,20 +71,35 @@ function App() {
   };
 
   return (
-    <div className="container" ref={containerRef}>
-      {monitors.map(m => (
-        <Slider
-          displayName={m.name.toLowerCase()}
-          onChange={(val: number) => handleSlider(val, m.device_name)}
-          onDoubleClick={() => handleSlider(0, m.device_name)}
-          key={m.device_name}
-          minValue={-100}
-          maxValue={100}
-          centerValue={0}
-          brightnessValue={m.brightness}
-        />
-      ))}
-    </div>
+    <main
+      id="root"
+      className="min-h-screen w-full bg-black/40 backdrop-blur-m flex justify-center flex-col items-center"
+    >
+      <div
+        className="absolute inset-0 bg-cover bg-center"
+        style={{
+          backgroundImage: `url(${fubuki})`,
+          opacity: 0.35,
+        }}
+      />
+      <div 
+        className="container"
+        ref={containerRef}
+      >
+        {monitors.map(m => (
+          <Slider
+            displayName={m.name.toLowerCase()}
+            onChange={(val: number) => handleSlider(val, m.device_name)}
+            onDoubleClick={() => handleSlider(0, m.device_name)}
+            key={m.device_name}
+            minValue={-100}
+            maxValue={100}
+            centerValue={0}
+            brightnessValue={m.brightness}
+          />
+        ))}
+      </div>
+    </main>
   );
 }
 

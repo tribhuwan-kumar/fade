@@ -1,7 +1,8 @@
 import React, { 
   useState,
   useEffect,
-  useMemo
+  useMemo,
+  useRef
 } from "react";
 
 interface SliderProps {
@@ -34,6 +35,34 @@ const Slider: React.FC<SliderProps> = ({
   );
 
   const [value, setValue] = useState(brightnessValue);
+
+  const STEPS = 25;
+  const stepValues = useMemo(() => {
+    const step = (maxValue - minValue) / (STEPS - 1);
+    return Array.from({ length: STEPS }, (_, i) =>
+      Math.round(minValue + step * i)
+    );
+  }, [minValue, maxValue]);
+
+  const snapToStep = (v: number) => {
+    return stepValues.reduce((prev, curr) =>
+      Math.abs(curr - v) < Math.abs(prev - v) ? curr : prev
+    );
+  };
+
+  const debouncedChange = useRef<((v: number) => void) | null>(null);
+
+  useEffect(() => {
+    let timer: any;
+    debouncedChange.current = (v: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        onChange(v);
+      }, 150); // adjust delay
+    };
+    return () => clearTimeout(timer);
+  }, [onChange]);
+
 
   const valuePercent = useMemo(
     () => ((value - minValue) / (maxValue - minValue)) * 100,
@@ -81,7 +110,7 @@ const Slider: React.FC<SliderProps> = ({
 
   return (
     <div
-      className={`w-[90%] mt-[45px] mr-auto ml-auto my-auto flex items-center justify-center ${ className || ""}`}
+      className={`w-[90%] mt-[10px] mr-auto ml-auto my-auto flex items-center justify-center ${ className || ""}`}
     >
       <div className="relative w-full h-fit inline-block">
         <div className="group w-full" onDoubleClick={onDoubleClick}>
@@ -93,7 +122,9 @@ const Slider: React.FC<SliderProps> = ({
             <span className="font-medium text-center">{value}</span>
             <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-[#424242]"></div>
           </div>
-          <span className="absolute right-0 bottom-10 ml-auto mr-2 text-xs text-shadow-lg text-center items-center content-center text-slate-200/60 mt-3">
+          <span 
+            className="absolute right-0 bottom-10 ml-auto mr-2 text-sm text-center items-center font-mono text-slate-200/90 content-center mt-2"
+          >
             {displayName}
           </span>
           <div className="relative flex h-[5px] items-center">
@@ -113,7 +144,13 @@ const Slider: React.FC<SliderProps> = ({
             min={minValue}
             max={maxValue}
             value={value}
-            onChange={(e) => onChange(Number(e.target.value))}
+            step={(maxValue - minValue) / (STEPS - 1)}
+            onChange={(e) => {
+              const raw = Number(e.target.value);
+              const snapped = snapToStep(raw);
+              setValue(snapped);
+              debouncedChange.current?.(snapped);
+            }}
             className="absolute w-full h-[5px] top-0 left-0 opacity-0 cursor-pointer"
           />
         </div>

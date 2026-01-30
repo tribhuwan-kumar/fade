@@ -13,7 +13,7 @@
     "windows": [
       {
         "title": "fade",
-        "resizable": true,
+        "resizable": false,
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
@@ -30,11 +30,6 @@
     "active": true,
     "category": "Utility",
     "copyright": "@tribhuwan-kumar",
-    "targets": ["nsis"],
-    "icon": [
-      "icons/StoreLogo.png",
-      "icons/icon.ico",
-      "icons/icon.png"
-    ]
+    "targets": ["nsis"]
   }
 }
