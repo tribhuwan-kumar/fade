@@ -1,9 +1,9 @@
 import "./App.css";
+import fubuki from "@/assets/fubuki.jpg";
 import Slider from "@/components/Slider";
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useEffect, useRef } from "react";
 import { LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
-import fubuki from "@/assets/fubuki.jpg";
 
 const WINDOW_WIDTH = 380;
 
